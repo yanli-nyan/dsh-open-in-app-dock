@@ -40,6 +40,8 @@ window.__ModuleLoader__.load({
     const LAST_KEY = 'dsh-open-in-app-dock:last';
     /** 按钮位置的本地偏好。 */
     const POSITION_KEY = 'dsh-open-in-app-dock:position';
+    /** 「切换打开方式时是否顺带启动一次」的本地偏好。 */
+    const LAUNCH_ON_PICK_KEY = 'dsh-open-in-app-dock:launch-on-pick';
     const STYLE_ATTR = 'data-dsh-open-in-app-dock';
     /** 新装默认落在右上角（用户要求的主位置）；可在设置里改。 */
     const DEFAULT_POSITION = 'header';
@@ -67,10 +69,13 @@ window.__ModuleLoader__.load({
         'menu.retry': '重试',
         'menu.pickTitle': '更换打开方式',
         'menu.pickTarget': '下次单击将用以下应用打开',
+        'menu.pickTargetLaunch': '选中后将立刻用该应用打开',
         'button.change': '更换',
         'button.changeHint': '单击用 {app} 打开；右键或点角标更换',
         'settings.title': '「在应用中打开」按钮位置',
         'settings.desc': '把应用列表放在会话标题栏右上角、输入框底栏左侧，或隐藏。偏好保存在本机浏览器。',
+        'settings.launchTitle': '切换打开方式时立即启动',
+        'settings.launchDesc': '开启后，在列表里选中另一个应用会立刻用它打开当前工作区；关闭时只更换下次单击使用的应用，不打断当前操作。',
         'pos.header': '右上角',
         'pos.composer': '底栏左侧',
         'pos.hidden': '隐藏',
@@ -89,10 +94,13 @@ window.__ModuleLoader__.load({
         'menu.retry': 'Retry',
         'menu.pickTitle': 'Change how it opens',
         'menu.pickTarget': 'A single click will then open with',
+        'menu.pickTargetLaunch': 'Picking one opens with it right away',
         'button.change': 'Change',
         'button.changeHint': 'Click opens with {app}; right-click or use the badge to change',
         'settings.title': '"Open in app" button position',
         'settings.desc': 'Place the application list in the session header top-right, at the left of the composer toolbar, or hide it. The preference is stored in this browser.',
+        'settings.launchTitle': 'Launch immediately when switching',
+        'settings.launchDesc': 'When on, picking another application in the list opens the workspace with it right away. When off, picking only changes what the next click uses, without interrupting what you are doing.',
         'pos.header': 'Top-right',
         'pos.composer': 'Composer left',
         'pos.hidden': 'Hidden',
@@ -188,54 +196,96 @@ window.__ModuleLoader__.load({
       '.dsod_segBtn.is-on{background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary);',
       'box-shadow:0 1px 2px rgba(0,0,0,.12)}',
       '.dsod_segBtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f8cff);outline-offset:1px}',
+      /* 设置里的开关：与宿主 Switch 同尺寸观感，自绘以免依赖不确定的导出名。 */
+      '.dsod_switch{position:relative;flex:none;width:38px;height:22px;padding:0;border:0.5px solid var(--dsw-alias-border-l2,#0000001f);',
+      'border-radius:999px;background:var(--dsw-alias-bg-layer-2);cursor:pointer;transition:background 140ms ease}',
+      '.dsod_switch.is-on{background:var(--dsw-alias-state-business-primary,#4f8cff);border-color:transparent}',
+      '.dsod_switch:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f8cff);outline-offset:2px}',
+      '.dsod_knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;',
+      'box-shadow:0 1px 2px rgba(0,0,0,.28);transition:transform 140ms ease}',
+      '.dsod_switch.is-on .dsod_knob{transform:translateX(16px)}',
     ].join('');
 
     // ------------------------------------------------------------------
-    // 位置偏好：localStorage 是真相源，内存快照让 React 同步读。
+    // 本地偏好：localStorage 是真相源，内存快照让 React 同步读。
+    // 两项偏好（按钮位置、切换时是否启动）共用同一套存储与订阅逻辑。
     // ------------------------------------------------------------------
-    const positionListeners = new Set();
-    let positionSnapshot = readPosition();
+    /**
+     * 建一个持久化偏好。
+     * @param key localStorage 键名。
+     * @param fallback 没有有效值时使用的默认值。
+     * @param normalize 把任意输入收成合法值；不认识的值返回 undefined，表示「不写、也不改」。
+     */
+    function createPreference(key, fallback, normalize) {
+      const listeners = new Set();
+      const read = () => {
+        try {
+          const value = normalize(window.localStorage.getItem(key));
+          return value === undefined ? fallback : value;
+        } catch (error) {
+          // 坏数据或 localStorage 被禁用：退回默认值，不把异常抛给宿主。
+          return fallback;
+        }
+      };
+      let snapshot = read();
+      const preference = {
+        get: () => snapshot,
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
+        set: (next) => {
+          const value = normalize(next);
+          if (value === undefined || value === snapshot) return;
+          snapshot = value;
+          try {
+            // 布尔用 '1'/'0' 存，字符串原样存，便于在 DevTools 里直接看懂。
+            window.localStorage.setItem(key, typeof value === 'boolean' ? (value ? '1' : '0') : value);
+          } catch (error) {
+            // 写入失败时本次会话仍按内存值生效。
+          }
+          for (const listener of Array.from(listeners)) {
+            try { listener(); } catch (error) { /* 单个订阅者出错不影响其他订阅者 */ }
+          }
+        },
+      };
+      return preference;
+    }
+
+    /** 订阅一个偏好的 hook；值一变，用到它的组件都会重渲染。 */
+    function usePreference(preference) {
+      const [value, setValue] = React.useState(preference.get);
+      React.useEffect(
+        () => preference.subscribe(() => { setValue(preference.get()); }),
+        [],
+      );
+      return value;
+    }
+
+    /** 按钮位置：右上角 / 底栏左侧 / 隐藏。 */
+    const positionPreference = createPreference(
+      POSITION_KEY,
+      DEFAULT_POSITION,
+      (value) => (isPosition(value) ? value : undefined),
+    );
+
+    /**
+     * 切换打开方式时是否顺带启动一次。
+     * 默认 false：右键/角标只改「下次单击用哪个」，不打断当前操作。
+     * 存成 '1'/'0'；没写过（null）走默认，其他脏值也走默认。
+     */
+    const launchOnPickPreference = createPreference(
+      LAUNCH_ON_PICK_KEY,
+      false,
+      (value) => {
+        if (value === '1' || value === 1 || value === true) return true;
+        if (value === '0' || value === 0 || value === false) return false;
+        return value === null || value === undefined ? false : undefined;
+      },
+    );
 
     function isPosition(value) {
       return value === 'header' || value === 'composer' || value === 'hidden';
-    }
-
-    function readPosition() {
-      try {
-        const raw = window.localStorage.getItem(POSITION_KEY);
-        return isPosition(raw) ? raw : DEFAULT_POSITION;
-      } catch (error) {
-        return DEFAULT_POSITION;
-      }
-    }
-
-    function getPosition() {
-      return positionSnapshot;
-    }
-
-    function subscribePosition(listener) {
-      positionListeners.add(listener);
-      return () => { positionListeners.delete(listener); };
-    }
-
-    function setPosition(next) {
-      if (!isPosition(next) || next === positionSnapshot) return;
-      positionSnapshot = next;
-      try {
-        window.localStorage.setItem(POSITION_KEY, next);
-      } catch (error) {
-        // 存储被禁用时仅本次会话内生效。
-      }
-      for (const listener of Array.from(positionListeners)) {
-        try { listener(); } catch (error) { /* 单个订阅者出错不影响其他订阅者 */ }
-      }
-    }
-
-    /** 订阅位置偏好的 hook；位置一变，两个座位的组件都会立即重渲染。 */
-    function usePosition() {
-      const [value, setValue] = React.useState(getPosition);
-      React.useEffect(() => subscribePosition(() => { setValue(getPosition()); }), []);
-      return value;
     }
 
     // ------------------------------------------------------------------
@@ -332,16 +382,30 @@ window.__ModuleLoader__.load({
     const MENU_WIDTH = 240;
     const MENU_MAX_HEIGHT = 420;
 
+    /** 视口尺寸；宿主环境一定有，这里兜底只为让异常环境（测试/嵌入）不至于算出 NaN。 */
+    function viewport() {
+      const width = Number(window.innerWidth);
+      const height = Number(window.innerHeight);
+      return {
+        width: Number.isFinite(width) && width > 0 ? width : 1024,
+        height: Number.isFinite(height) && height > 0 ? height : 768,
+      };
+    }
+
+    /**
+     * 依据锚点位置算菜单坐标：在上半屏向下弹，下半屏向上弹，左右越界时钳制。
+     * @param rect 锚点的 getBoundingClientRect()。
+     */
     function placeMenu(rect) {
-      const width = Math.min(MENU_WIDTH, Math.max(180, window.innerWidth - 16));
-      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-      // 锚点在下半屏向上弹，在上半屏（会话头）向下弹，避免菜单冲出视口。
-      const below = rect.top < window.innerHeight * 0.5;
+      const view = viewport();
+      const width = Math.min(MENU_WIDTH, Math.max(180, view.width - 16));
+      const left = Math.max(8, Math.min(rect.right - width, view.width - width - 8));
+      const below = rect.top < view.height * 0.5;
       if (below) {
-        const top = Math.min(rect.bottom + MENU_GAP, Math.max(8, window.innerHeight - MENU_MAX_HEIGHT - 8));
+        const top = Math.min(rect.bottom + MENU_GAP, Math.max(8, view.height - MENU_MAX_HEIGHT - 8));
         return { left, top, width, mode: 'down' };
       }
-      return { left, bottom: Math.max(8, window.innerHeight - rect.top + MENU_GAP), width, mode: 'up' };
+      return { left, bottom: Math.max(8, view.height - rect.top + MENU_GAP), width, mode: 'up' };
     }
 
     // ------------------------------------------------------------------
@@ -356,7 +420,8 @@ window.__ModuleLoader__.load({
         ? t
         : (key) => DICTS.zh[key] !== undefined ? DICTS.zh[key] : key;
       const lang = langOf(translate);
-      const position = usePosition();
+      const position = usePreference(positionPreference);
+      const launchOnPick = usePreference(launchOnPickPreference);
 
       // cwd 走 Session 列表行（SessionSnapshot 本身不含 cwd）。没有会话行或没有工作区时不渲染。
       const cwd = typeof useSessions === 'function'
@@ -483,12 +548,17 @@ window.__ModuleLoader__.load({
         start(preferred);
       };
 
-      /** 菜单里选一个：只改「下次单击用哪个」，不启动。 */
+      /**
+       * 菜单里选一个：记住它，成为「下次单击用哪个」。
+       * 偏好 launchOnPick 为真时，同时立刻用它打开一次（等于「换完顺手打开」）；
+       * 默认只切换不启动，避免打断手头的操作。
+       */
       const remember = (appId) => {
         setLast(appId);
         writeLast(appId);
         setOpen(false);
         setError(false);
+        if (launchOnPick) start(appId);
       };
 
       /** 右键：换应用，同时压掉系统菜单。 */
@@ -556,7 +626,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsod_head' },
           h('span', { className: 'dsod_headTitle' }, translate('menu.pickTitle')),
           h('span', { className: 'dsod_headPath', title: cwd }, translate('menu.target', { path: cwd }))),
-        h('div', { className: 'dsod_note dsod_noteHint' }, translate('menu.pickTarget')),
+        h('div', { className: 'dsod_note dsod_noteHint' },
+          translate(launchOnPick ? 'menu.pickTargetLaunch' : 'menu.pickTarget')),
         h('div', { className: 'dsod_sep' }),
         list.length === 0
           ? h('div', { className: 'dsod_note' }, translate(loadError ? 'menu.loadError' : 'menu.empty'))
@@ -597,10 +668,8 @@ window.__ModuleLoader__.load({
 
     /** 通用设置里的一行：三选一切换按钮位置。 */
     function PositionSettingRow(props) {
-      const translate = typeof props.t === 'function'
-        ? props.t
-        : (key) => DICTS.zh[key] !== undefined ? DICTS.zh[key] : key;
-      const position = usePosition();
+      const translate = useTranslator(props);
+      const position = usePreference(positionPreference);
       return h('div', { className: 'dsod_root dsod_row', 'data-anchor': 'settings' },
         h('div', { className: 'dsod_rowText' },
           h('div', { className: 'dsod_rowTitle' }, translate('settings.title')),
@@ -611,8 +680,36 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'dsod_segBtn' + (position === id ? ' is-on' : ''),
             'aria-pressed': position === id ? 'true' : 'false',
-            onClick: () => { setPosition(id); },
+            onClick: () => { positionPreference.set(id); },
           }, translate('pos.' + id)))));
+    }
+
+    /**
+     * 通用设置里的另一行：切换打开方式时是否顺带启动一次。
+     * 用自绘开关而不是宿主 Switch，避免依赖平台表里不确定的导出名。
+     */
+    function LaunchOnPickSettingRow(props) {
+      const translate = useTranslator(props);
+      const enabled = usePreference(launchOnPickPreference);
+      return h('div', { className: 'dsod_root dsod_row', 'data-anchor': 'settings' },
+        h('div', { className: 'dsod_rowText' },
+          h('div', { className: 'dsod_rowTitle' }, translate('settings.launchTitle')),
+          h('div', { className: 'dsod_rowDesc' }, translate('settings.launchDesc'))),
+        h('button', {
+          type: 'button',
+          role: 'switch',
+          className: 'dsod_switch' + (enabled ? ' is-on' : ''),
+          'aria-checked': enabled ? 'true' : 'false',
+          'aria-label': translate('settings.launchTitle'),
+          onClick: () => { launchOnPickPreference.set(!enabled); },
+        }, h('span', { className: 'dsod_knob', 'aria-hidden': 'true' })));
+    }
+
+    /** 取本插件的词典函数；拿不到绑定的 t 时退回中文表（便于离线测试）。 */
+    function useTranslator(props) {
+      return typeof props.t === 'function'
+        ? props.t
+        : (key) => DICTS.zh[key] !== undefined ? DICTS.zh[key] : key;
     }
 
     /** 从绑定后的 t 推断当前语言（词典只有 zh/en 两套）。 */
@@ -665,13 +762,22 @@ window.__ModuleLoader__.load({
         order: 60,
         locale: NS,
       }, PositionSettingRow));
+      // 设置 → 通用 → 紧接一行：切换打开方式时是否顺带启动。
+      ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+        name: 'settings.general.item',
+        id: 'open-in-app-dock-launch-on-pick',
+        order: 61,
+        locale: NS,
+      }, LaunchOnPickSettingRow));
 
       if (typeof window !== 'undefined') {
         window.__dshOpenInAppDock = {
           apps: () => loadApps(),
           last: () => readLast(),
-          position: getPosition,
-          setPosition: setPosition,
+          position: positionPreference.get,
+          setPosition: positionPreference.set,
+          launchOnPick: launchOnPickPreference.get,
+          setLaunchOnPick: launchOnPickPreference.set,
         };
       }
     }

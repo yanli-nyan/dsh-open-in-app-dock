@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Open in app (pinned button)",
-    "description": "Pins the \"Open in app\" list as a resident button: a single click opens the current workspace with the selected application, and a right-click or the hover badge changes it. The position (header top-right / composer left / hidden) is chosen in Settings → General."
+    "description": "Pins the \"Open in app\" list as a resident button: a single click opens the workspace with the selected application, and a right-click or the hover badge changes it. Settings let you move the button (header top-right / composer left / hidden) and choose whether switching the application launches it immediately."
   }
 }

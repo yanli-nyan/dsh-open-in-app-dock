@@ -1,10 +1,10 @@
 {
   "name": "@local/dsh-open-in-app-dock",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "icon": "./icon.svg",
   "type": "module",
-  "description": "把会话头「更多 → 在应用中打开」取出为常驻按钮：单击即用当前选定的应用打开工作区，右键或悬浮角标更换应用；位置在设置里切换。",
+  "description": "把会话头「更多 → 在应用中打开」取出为常驻按钮：单击即用当前选定的应用打开，右键或悬浮角标更换；位置与「切换时是否顺带启动」都在设置里。",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
