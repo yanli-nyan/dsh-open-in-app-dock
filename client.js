@@ -1,22 +1,26 @@
 // dsh-open-in-app-dock — 浏览器半边。
 //
-// 目标：把会话头「更多 → 在应用中打开」里折叠起来的应用列表，取出来做成
-// 输入框底栏左侧（composer 工具行左组）的常驻按钮，点一下即列应用，选中就打开当前工作区。
+// 目标：把会话头「更多 → 在应用中打开」里折叠起来的应用列表取出，做成一个常驻按钮；
+// 位置可在三个候选之间切换（右上角工具区 / 输入框底栏左侧 / 隐藏），偏好存在本机。
 //
 // 宿主事实（写代码前已逐条核对源码，改动前请先复核）：
-//  · 座位 conversation.input.left 是 list / session 作用域，声明方在
-//    dsh-client-ui-conversation 的 InputBar：渲染位置正是 .tools 组末尾（+ 号、权限、Plan 之后），
-//    也就是输入框底栏的左侧。ownerProps 为 {}，组件另从标准 props 拿 sessionId / useSessions。
-//  · 应用目录走宿主精确路由（同官方 dsh-client-ui-open-in-app 用同一批路由）：
-//      GET  open-in-app/apps          -> { apps: string[] }        已探测到的应用 id，按宿主张单顺序
+//  · conversation.session.header.utilities 是 list / session 作用域，渲染在会话标题栏右上，
+//    紧邻官方「⋯ 更多」按钮的左边（ConversationSession.tsx:212）。官方 ui-schedule 用 order:-5
+//    占同一座位，⋯ 按钮是 order 0，所以 order:-1 落在两者之间。这是「界面右上角」的正确座位。
+//  · conversation.input.left 是 list / session 作用域，渲染在输入框工具行 .tools 末尾（+ 号之后）；
+//    配合 order:-1 排到该行最左。ownerProps 为 {}。
+//  · settings.general.item 是 list / root 作用域，通用设置页里的单行偏好座位；
+//    ownerProps 为 {}，组件自带文案与控件（官方 DeveloperToolsRow 正是这么写的）。
+//  · 应用目录走宿主精确路由（与官方 dsh-client-ui-open-in-app 同一批）：
+//      GET  open-in-app/apps          -> { apps: string[] }
 //      GET  open-in-app/icon/<id>     -> PNG 图标
 //      POST open-in-app/open          -> { app, path } 启动应用打开目录，成功 200
-//    路由本身带 connection 信任栅栏（cookie 鉴权 + Host/Origin 校验），浏览器同源 fetch 直接可用。
-//  · 可用性每页只读一次（宿主侧目录惰性解析一次），因此这里也只在挂载时拉一次并缓存到模块级，
-//    Web 部署（无桌面）时 apps 为空 -> 本插件完全不渲染任何东西，不留死按钮。
-//  · 弹出层必须 portal 到 document.body：composer 卡片会裁剪 overflow（宿主文档明确要求）。
-//  · 模块平台表里有 react / react-dom / @deepseek-ai/dsh-client-ui-primitives，但这里只用
-//    react + react-dom，避免依赖不确定的导出名。
+//    路由自带 connection 信任栅栏（cookie 鉴权 + Host/Origin 校验），浏览器同源 fetch 直接可用。
+//  · 可用性每页只读一次（宿主侧目录惰性解析一次），因此这里也只在挂载时拉一次并缓存到模块级。
+//    Web 部署（无桌面）时 apps 为空 -> 完全不渲染，不留死按钮。
+//  · 弹出层必须 portal 到 document.body：composer 卡片与会话头都会裁剪 overflow。
+//  · 两个座位都是 list 且 outlet 是 display:contents：组件渲染 null 时不产生 flex item，
+//    因此「注册在多个座位、只在一个座位真正渲染」不会留下空隙，无需动态增删注册。
 window.__ModuleLoader__.load({
   id: '@local/dsh-open-in-app-dock',
   factory(require) {
@@ -32,9 +36,21 @@ window.__ModuleLoader__.load({
     const APPS_ROUTE = 'open-in-app/apps';
     const ICON_ROUTE = 'open-in-app/icon';
     const OPEN_ROUTE = 'open-in-app/open';
-    /** 「上次用过哪个应用」的本地记忆，与官方 dsh.open-in-app.choice 分开，互不污染。 */
+    /** 「上次用过哪个应用」的本地记忆。 */
     const LAST_KEY = 'dsh-open-in-app-dock:last';
+    /** 按钮位置的本地偏好。 */
+    const POSITION_KEY = 'dsh-open-in-app-dock:position';
     const STYLE_ATTR = 'data-dsh-open-in-app-dock';
+    /** 新装默认落在右上角（用户要求的主位置）；可在设置里改。 */
+    const DEFAULT_POSITION = 'header';
+
+    /** 两个真实渲染位置；hidden 不注册任何渲染。 */
+    const POSITIONS = {
+      header: { slot: 'conversation.session.header.utilities', order: -1 },
+      composer: { slot: 'conversation.input.left', order: -1 },
+    };
+    /** 设置行里的三选一，顺序即展示顺序。 */
+    const POSITION_OPTIONS = ['header', 'composer', 'hidden'];
 
     const DICTS = {
       zh: {
@@ -49,6 +65,13 @@ window.__ModuleLoader__.load({
         'menu.error': '打开失败，请重试。',
         'menu.loadError': '无法读取应用列表，点击重试。',
         'menu.retry': '重试',
+        'menu.moveToHeader': '移到右上角',
+        'menu.moveToComposer': '移到底栏左侧',
+        'settings.title': '「在应用中打开」按钮位置',
+        'settings.desc': '把应用列表放在会话标题栏右上角、输入框底栏左侧，或隐藏。偏好保存在本机浏览器。',
+        'pos.header': '右上角',
+        'pos.composer': '底栏左侧',
+        'pos.hidden': '隐藏',
       },
       en: {
         'button.label': 'Open in app',
@@ -62,6 +85,13 @@ window.__ModuleLoader__.load({
         'menu.error': 'Could not open. Try again.',
         'menu.loadError': 'Could not read the application list. Click to retry.',
         'menu.retry': 'Retry',
+        'menu.moveToHeader': 'Move to top-right',
+        'menu.moveToComposer': 'Move to composer bar',
+        'settings.title': '"Open in app" button position',
+        'settings.desc': 'Place the application list in the session header top-right, at the left of the composer toolbar, or hide it. The preference is stored in this browser.',
+        'pos.header': 'Top-right',
+        'pos.composer': 'Composer left',
+        'pos.hidden': 'Hidden',
       },
     };
 
@@ -70,49 +100,24 @@ window.__ModuleLoader__.load({
      * 未知 id 退回「首字母大写」。
      */
     const APP_NAMES = {
-      cursor: 'Cursor',
-      vscode: 'VS Code',
-      vscodeinsiders: 'VS Code Insiders',
-      windsurf: 'Windsurf',
-      zed: 'Zed',
-      sublimetext: 'Sublime Text',
-      xcode: 'Xcode',
-      androidstudio: 'Android Studio',
-      intellij: 'IntelliJ IDEA',
-      pycharm: 'PyCharm',
-      webstorm: 'WebStorm',
-      phpstorm: 'PhpStorm',
-      goland: 'GoLand',
-      rider: 'Rider',
-      rustrover: 'RustRover',
-      fork: 'Fork',
-      sourcetree: 'Sourcetree',
-      github: 'GitHub Desktop',
-      tower: 'Tower',
-      gitkraken: 'GitKraken',
-      smartgit: 'SmartGit',
-      sublimemerge: 'Sublime Merge',
-      ghostty: 'Ghostty',
-      warp: 'Warp',
-      iterm: 'iTerm2',
-      kitty: 'kitty',
-      windowsterminal: 'Windows Terminal',
-      gitbash: 'Git Bash',
-      gnometerminal: 'GNOME Terminal',
-      konsole: 'Konsole',
-      terminal: 'Terminal',
+      cursor: 'Cursor', vscode: 'VS Code', vscodeinsiders: 'VS Code Insiders',
+      windsurf: 'Windsurf', zed: 'Zed', sublimetext: 'Sublime Text', xcode: 'Xcode',
+      androidstudio: 'Android Studio', intellij: 'IntelliJ IDEA', pycharm: 'PyCharm',
+      webstorm: 'WebStorm', phpstorm: 'PhpStorm', goland: 'GoLand', rider: 'Rider',
+      rustrover: 'RustRover', fork: 'Fork', sourcetree: 'Sourcetree',
+      github: 'GitHub Desktop', tower: 'Tower', gitkraken: 'GitKraken',
+      smartgit: 'SmartGit', sublimemerge: 'Sublime Merge', ghostty: 'Ghostty',
+      warp: 'Warp', iterm: 'iTerm2', kitty: 'kitty',
+      windowsterminal: 'Windows Terminal', gitbash: 'Git Bash',
+      gnometerminal: 'GNOME Terminal', konsole: 'Konsole', terminal: 'Terminal',
     };
     const APP_NAMES_ZH = {
-      finder: '访达',
-      explorer: '文件资源管理器',
-      filemanager: '文件管理器',
-      terminal: '终端',
+      finder: '访达', explorer: '文件资源管理器', filemanager: '文件管理器', terminal: '终端',
     };
 
     const CSS = [
       '/* 本插件自绘样式，类名统一 dsod_ 前缀，不覆盖宿主或其它插件的规则。 */',
-      /* order:-1 把本控件排到 composer 工具行最左（+ 号之前）：slot outlet 是 display:contents，
-         其子元素直接成为 .tools 的 flex item，因此 order 生效。 */
+      /* order:-1 把控件排到所在 list 的最前：两个座位都是 flex 容器，outlet 是 display:contents。 */
       '.dsod_root{display:flex;align-items:center;flex:none;min-width:0;order:-1}',
       '.dsod_btn{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:999px;',
       'background:var(--dsw-specific-selector,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary);cursor:pointer;',
@@ -122,6 +127,9 @@ window.__ModuleLoader__.load({
       '.dsod_btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f8cff);outline-offset:2px}',
       '.dsod_btn[data-busy="1"]{opacity:.6;cursor:progress}',
       '.dsod_btn[data-error="1"]{color:var(--dsw-alias-state-error-primary,#e5484d)}',
+      /* 会话头里的按钮跟随官方 headarMenuButton 观感：透明底、次要色、28px 见方。 */
+      '.dsod_root[data-anchor="header"] .dsod_btn{background:transparent;color:var(--dsw-alias-label-secondary)}',
+      '.dsod_root[data-anchor="header"] .dsod_btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,var(--dsw-alias-bg-layer-3))}',
       '.dsod_btn img{width:16px;height:16px;border-radius:3px;object-fit:contain;display:block}',
       '.dsod_icon{width:16px;height:16px;display:block}',
       '.dsod_menu{position:fixed;z-index:2147483000;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;',
@@ -132,8 +140,7 @@ window.__ModuleLoader__.load({
       '.dsod_head{display:flex;flex-direction:column;gap:2px;padding:4px 8px 6px}',
       '.dsod_headTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}',
       '.dsod_headPath{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));',
-      'font-family:var(--dsw-font-family-mono,ui-monospace,monospace);overflow:hidden;text-overflow:ellipsis;',
-      'white-space:nowrap}',
+      'font-family:var(--dsw-font-family-mono,ui-monospace,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsod_sep{height:0.5px;margin:4px 6px;background:var(--dsw-alias-border-l2,#0000001f)}',
       '.dsod_item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:8px;',
       'background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer}',
@@ -149,7 +156,67 @@ window.__ModuleLoader__.load({
       '.dsod_retry{margin:2px 6px 4px;padding:6px 10px;font:inherit;font-size:12px;border-radius:8px;',
       'border:0.5px solid var(--dsw-alias-border-l2,#0000001f);background:var(--dsw-alias-bg-layer-2,transparent);',
       'color:var(--dsw-alias-label-primary);cursor:pointer}',
+      /* 设置行：标题 + 说明 + 三选一分段控件，与官方偏好行同构。 */
+      '.dsod_row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0}',
+      '.dsod_rowText{display:flex;flex-direction:column;gap:3px;min-width:0}',
+      '.dsod_rowTitle{font-size:13px;line-height:1.4;color:var(--dsw-alias-label-primary)}',
+      '.dsod_rowDesc{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+      '.dsod_seg{display:flex;flex:none;gap:2px;padding:2px;border-radius:9px;background:var(--dsw-alias-bg-layer-2)}',
+      '.dsod_segBtn{padding:5px 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);',
+      'font:inherit;font-size:12px;line-height:1.4;cursor:pointer;white-space:nowrap}',
+      '.dsod_segBtn:hover{color:var(--dsw-alias-label-primary)}',
+      '.dsod_segBtn.is-on{background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary);',
+      'box-shadow:0 1px 2px rgba(0,0,0,.12)}',
+      '.dsod_segBtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f8cff);outline-offset:1px}',
     ].join('');
+
+    // ------------------------------------------------------------------
+    // 位置偏好：localStorage 是真相源，内存快照让 React 同步读。
+    // ------------------------------------------------------------------
+    const positionListeners = new Set();
+    let positionSnapshot = readPosition();
+
+    function isPosition(value) {
+      return value === 'header' || value === 'composer' || value === 'hidden';
+    }
+
+    function readPosition() {
+      try {
+        const raw = window.localStorage.getItem(POSITION_KEY);
+        return isPosition(raw) ? raw : DEFAULT_POSITION;
+      } catch (error) {
+        return DEFAULT_POSITION;
+      }
+    }
+
+    function getPosition() {
+      return positionSnapshot;
+    }
+
+    function subscribePosition(listener) {
+      positionListeners.add(listener);
+      return () => { positionListeners.delete(listener); };
+    }
+
+    function setPosition(next) {
+      if (!isPosition(next) || next === positionSnapshot) return;
+      positionSnapshot = next;
+      try {
+        window.localStorage.setItem(POSITION_KEY, next);
+      } catch (error) {
+        // 存储被禁用时仅本次会话内生效。
+      }
+      for (const listener of Array.from(positionListeners)) {
+        try { listener(); } catch (error) { /* 单个订阅者出错不影响其他订阅者 */ }
+      }
+    }
+
+    /** 订阅位置偏好的 hook；位置一变，两个座位的组件都会立即重渲染。 */
+    function usePosition() {
+      const [value, setValue] = React.useState(getPosition);
+      React.useEffect(() => subscribePosition(() => { setValue(getPosition()); }), []);
+      return value;
+    }
 
     // ------------------------------------------------------------------
     // 应用目录：模块级单次读取，卸载时由 ctx.effect 清空以便重载后重读。
@@ -239,30 +306,37 @@ window.__ModuleLoader__.load({
     }
 
     // ------------------------------------------------------------------
-    // 弹出菜单定位与关闭
+    // 弹出菜单定位：按锚点上下空间自动选择方向，越界时钳制到视口内。
     // ------------------------------------------------------------------
     const MENU_GAP = 8;
+    const MENU_WIDTH = 240;
+    const MENU_MAX_HEIGHT = 420;
 
-    /** 以锚点按钮右对齐、向上弹出；越界时钳制到视口内。 */
     function placeMenu(rect) {
-      const width = 240;
+      const width = Math.min(MENU_WIDTH, Math.max(180, window.innerWidth - 16));
       const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-      const bottom = Math.max(8, window.innerHeight - rect.top + MENU_GAP);
-      return { left, bottom, width };
+      // 锚点在下半屏向上弹，在上半屏（会话头）向下弹，避免菜单冲出视口。
+      const below = rect.top < window.innerHeight * 0.5;
+      if (below) {
+        const top = Math.min(rect.bottom + MENU_GAP, Math.max(8, window.innerHeight - MENU_MAX_HEIGHT - 8));
+        return { left, top, width, mode: 'down' };
+      }
+      return { left, bottom: Math.max(8, window.innerHeight - rect.top + MENU_GAP), width, mode: 'up' };
     }
 
     // ------------------------------------------------------------------
     // 组件本体
     // ------------------------------------------------------------------
     /**
-     * @param props sessionId（session 作用域标准 props）、useSessions（ui-session 标准 hooks）、t（本命名空间词典）。
+     * @param props anchor（'header' | 'composer'）、sessionId 与 useSessions（session 作用域标准 props）、t（本命名空间词典）。
      */
-    function OpenInAppDock(props) {
-      const { sessionId, useSessions, t } = props;
+    function OpenInAppButton(props) {
+      const { anchor, sessionId, useSessions, t } = props;
       const translate = typeof t === 'function'
         ? t
         : (key) => DICTS.zh[key] !== undefined ? DICTS.zh[key] : key;
       const lang = langOf(translate);
+      const position = usePosition();
 
       // cwd 走 Session 列表行（SessionSnapshot 本身不含 cwd）。没有会话行或没有工作区时不渲染。
       const cwd = typeof useSessions === 'function'
@@ -292,7 +366,12 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => { refresh(); }, [refresh]);
 
-      // 外部点击 / Esc / 滚动 / 尺寸变化都关掉菜单，避免浮层脱离锚点。
+      // 位置切走后菜单不该留一个脱离锚点的浮层。
+      React.useEffect(() => {
+        if (position !== anchor) setOpen(false);
+      }, [position, anchor]);
+
+      // 外部点击 / Esc / 滚动 / 尺寸变化都关掉菜单。
       React.useEffect(() => {
         if (!open) return undefined;
         const onPointerDown = (event) => {
@@ -308,16 +387,16 @@ window.__ModuleLoader__.load({
             setOpen(false);
           }
         };
-        const onShift = () => { setOpen(false); };
+        const close = () => { setOpen(false); };
         window.addEventListener('pointerdown', onPointerDown, true);
         window.addEventListener('keydown', onKeyDown, true);
-        window.addEventListener('scroll', onShift, true);
-        window.addEventListener('resize', onShift);
+        window.addEventListener('scroll', close, true);
+        window.addEventListener('resize', close);
         return () => {
           window.removeEventListener('pointerdown', onPointerDown, true);
           window.removeEventListener('keydown', onKeyDown, true);
-          window.removeEventListener('scroll', onShift, true);
-          window.removeEventListener('resize', onShift);
+          window.removeEventListener('scroll', close, true);
+          window.removeEventListener('resize', close);
         };
       }, [open]);
 
@@ -328,11 +407,14 @@ window.__ModuleLoader__.load({
         return () => { window.clearTimeout(timer); };
       }, [error]);
 
+      // 只在自己的位置上渲染；位置为 hidden 时两个座位都不渲染。
+      if (position !== anchor) return null;
       if (typeof cwd !== 'string' || cwd === '') return null;
       if (apps !== null && apps.length === 0 && !loadError) return null;
 
       const list = apps === null ? [] : apps;
       const preferred = list.indexOf(last) >= 0 ? last : list[0];
+      const otherAnchor = anchor === 'header' ? 'composer' : 'header';
 
       const toggle = () => {
         if (busyRef.current) return;
@@ -391,7 +473,14 @@ window.__ModuleLoader__.load({
           className: 'dsod_menu',
           role: 'menu',
           'aria-label': label,
-          style: { left: String(Math.round(rect.left)) + 'px', width: String(rect.width) + 'px', bottom: String(Math.round(rect.bottom)) + 'px' },
+          'data-mode': rect.mode,
+          style: {
+            left: String(Math.round(rect.left)) + 'px',
+            width: String(rect.width) + 'px',
+            ...(rect.mode === 'down'
+              ? { top: String(Math.round(rect.top)) + 'px' }
+              : { bottom: String(Math.round(rect.bottom)) + 'px' }),
+          },
         },
         h('div', { className: 'dsod_head' },
           h('span', { className: 'dsod_headTitle' }, translate('menu.title')),
@@ -416,17 +505,56 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.loadError')),
             h('button', { type: 'button', className: 'dsod_retry', onClick: refresh }, translate('menu.retry')))
           : null,
-        error ? h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.error')) : null),
+        error ? h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.error')) : null,
+        // 快捷换位：菜单里直接挪，不必进设置。
+        h('div', { className: 'dsod_sep' }),
+        h('button', {
+          type: 'button',
+          className: 'dsod_item',
+          onClick: () => { setOpen(false); setPosition(otherAnchor); },
+        },
+        h('span', { className: 'dsod_itemIcon' }, h(OpenGlyph, { size: 16 })),
+        h('span', { className: 'dsod_itemName' },
+          translate(otherAnchor === 'header' ? 'menu.moveToHeader' : 'menu.moveToComposer')))),
         document.body) : null;
 
-      return h('div', { className: 'dsod_root' }, button, menu);
+      return h('div', { className: 'dsod_root', 'data-anchor': anchor }, button, menu);
+    }
+
+    /** 右上角座位（会话标题栏，⋯ 左侧）。 */
+    function HeaderOpenInApp(props) {
+      return h(OpenInAppButton, Object.assign({}, props, { anchor: 'header' }));
+    }
+
+    /** 底栏左侧座位（输入框工具行最左）。 */
+    function ComposerOpenInApp(props) {
+      return h(OpenInAppButton, Object.assign({}, props, { anchor: 'composer' }));
+    }
+
+    /** 通用设置里的一行：三选一切换按钮位置。 */
+    function PositionSettingRow(props) {
+      const translate = typeof props.t === 'function'
+        ? props.t
+        : (key) => DICTS.zh[key] !== undefined ? DICTS.zh[key] : key;
+      const position = usePosition();
+      return h('div', { className: 'dsod_root dsod_row', 'data-anchor': 'settings' },
+        h('div', { className: 'dsod_rowText' },
+          h('div', { className: 'dsod_rowTitle' }, translate('settings.title')),
+          h('div', { className: 'dsod_rowDesc' }, translate('settings.desc'))),
+        h('div', { className: 'dsod_seg', role: 'group', 'aria-label': translate('settings.title') },
+          POSITION_OPTIONS.map((id) => h('button', {
+            key: id,
+            type: 'button',
+            className: 'dsod_segBtn' + (position === id ? ' is-on' : ''),
+            'aria-pressed': position === id ? 'true' : 'false',
+            onClick: () => { setPosition(id); },
+          }, translate('pos.' + id)))));
     }
 
     /** 从绑定后的 t 推断当前语言（词典只有 zh/en 两套）。 */
     function langOf(translate) {
       try {
-        const probe = translate('menu.title');
-        return probe === DICTS.zh['menu.title'] ? 'zh' : 'en';
+        return translate('menu.title') === DICTS.zh['menu.title'] ? 'zh' : 'en';
       } catch (error) {
         return 'en';
       }
@@ -451,17 +579,35 @@ window.__ModuleLoader__.load({
       // 卸载时清空目录缓存，重新启用会重新向宿主读一次可用性。
       ctx.effect(() => () => { appsPromise = null; }, 'open-in-app-dock: app cache');
 
-      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-        name: 'conversation.input.left',
+      // 两个座位都静态注册；组件只在自己的位置上渲染，其余情况返回 null。
+      // list 座位的 outlet 是 display:contents，返回 null 不会留下空隙。
+      ctx.slots.inject(POSITIONS.header.slot, () => ctx.slots.register({
+        name: POSITIONS.header.slot,
         id: 'open-in-app-dock',
-        order: 100,
+        order: POSITIONS.header.order,
         locale: NS,
-      }, OpenInAppDock));
+      }, HeaderOpenInApp));
+      ctx.slots.inject(POSITIONS.composer.slot, () => ctx.slots.register({
+        name: POSITIONS.composer.slot,
+        id: 'open-in-app-dock',
+        order: POSITIONS.composer.order,
+        locale: NS,
+      }, ComposerOpenInApp));
+
+      // 设置 → 通用 → 本行，切换位置。
+      ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+        name: 'settings.general.item',
+        id: 'open-in-app-dock',
+        order: 60,
+        locale: NS,
+      }, PositionSettingRow));
 
       if (typeof window !== 'undefined') {
         window.__dshOpenInAppDock = {
           apps: () => loadApps(),
           last: () => readLast(),
+          position: getPosition,
+          setPosition: setPosition,
         };
       }
     }
