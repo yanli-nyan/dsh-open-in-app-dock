@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Open in app (composer dock)",
+    "description": "Pins the \"Open in app\" application list from the session header more-menu to a resident button at the left of the composer toolbar: one click lists installed editors and terminals and opens the current workspace with the one you pick."
+  }
+}

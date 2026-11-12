@@ -1,0 +1,40 @@
+{
+  "name": "@local/dsh-open-in-app-dock",
+  "version": "1.0.0",
+  "private": true,
+  "icon": "./icon.svg",
+  "type": "module",
+  "description": "把会话头「更多 → 在应用中打开」从折叠菜单里取出来，做成输入框底栏左侧的常驻按钮。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "open-in-app"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

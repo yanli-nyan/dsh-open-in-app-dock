@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="底栏在应用中打开">
+  <defs>
+    <linearGradient id="dsodBg" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b2436"/>
+      <stop offset="100%" stop-color="#0e1524"/>
+    </linearGradient>
+    <linearGradient id="dsodAccent" x1="26" y1="26" x2="74" y2="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#4f8cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="22" fill="url(#dsodBg)"/>
+  <rect x="4.5" y="4.5" width="87" height="87" rx="19" fill="none" stroke="#7dd3fc" stroke-width="1.4" opacity="0.3"/>
+  <rect x="20" y="26" width="44" height="34" rx="7" fill="none" stroke="#7dd3fc" stroke-width="4" opacity="0.55"/>
+  <path d="M40 72h26" stroke="#7dd3fc" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+  <path d="M53 59v13" stroke="#7dd3fc" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+  <path d="M58 22h22v22" fill="none" stroke="url(#dsodAccent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M80 22 58 44" fill="none" stroke="url(#dsodAccent)" stroke-width="6" stroke-linecap="round"/>
+</svg>
