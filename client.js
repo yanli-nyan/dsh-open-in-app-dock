@@ -65,8 +65,10 @@ window.__ModuleLoader__.load({
         'menu.error': '打开失败，请重试。',
         'menu.loadError': '无法读取应用列表，点击重试。',
         'menu.retry': '重试',
-        'menu.moveToHeader': '移到右上角',
-        'menu.moveToComposer': '移到底栏左侧',
+        'menu.pickTitle': '更换打开方式',
+        'menu.pickTarget': '下次单击将用以下应用打开',
+        'button.change': '更换',
+        'button.changeHint': '单击用 {app} 打开；右键或点角标更换',
         'settings.title': '「在应用中打开」按钮位置',
         'settings.desc': '把应用列表放在会话标题栏右上角、输入框底栏左侧，或隐藏。偏好保存在本机浏览器。',
         'pos.header': '右上角',
@@ -85,8 +87,10 @@ window.__ModuleLoader__.load({
         'menu.error': 'Could not open. Try again.',
         'menu.loadError': 'Could not read the application list. Click to retry.',
         'menu.retry': 'Retry',
-        'menu.moveToHeader': 'Move to top-right',
-        'menu.moveToComposer': 'Move to composer bar',
+        'menu.pickTitle': 'Change how it opens',
+        'menu.pickTarget': 'A single click will then open with',
+        'button.change': 'Change',
+        'button.changeHint': 'Click opens with {app}; right-click or use the badge to change',
         'settings.title': '"Open in app" button position',
         'settings.desc': 'Place the application list in the session header top-right, at the left of the composer toolbar, or hide it. The preference is stored in this browser.',
         'pos.header': 'Top-right',
@@ -119,6 +123,8 @@ window.__ModuleLoader__.load({
       '/* 本插件自绘样式，类名统一 dsod_ 前缀，不覆盖宿主或其它插件的规则。 */',
       /* order:-1 把控件排到所在 list 的最前：两个座位都是 flex 容器，outlet 是 display:contents。 */
       '.dsod_root{display:flex;align-items:center;flex:none;min-width:0;order:-1}',
+      /* 主按钮 + 右下角「换」角标叠在一起：悬浮时才露出角标，单击区域仍是整颗按钮。 */
+      '.dsod_stack{position:relative;display:flex;align-items:center;flex:none}',
       '.dsod_btn{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:999px;',
       'background:var(--dsw-specific-selector,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary);cursor:pointer;',
       'transition:background 140ms ease,opacity 140ms ease}',
@@ -132,6 +138,17 @@ window.__ModuleLoader__.load({
       '.dsod_root[data-anchor="header"] .dsod_btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,var(--dsw-alias-bg-layer-3))}',
       '.dsod_btn img{width:16px;height:16px;border-radius:3px;object-fit:contain;display:block}',
       '.dsod_icon{width:16px;height:16px;display:block}',
+      /* 角标：默认透明且不占位（绝对定位挂在按钮右下角）；悬浮/聚焦/菜单展开时淡入。 */
+      '.dsod_badge{position:absolute;right:-3px;bottom:-3px;display:grid;place-items:center;width:13px;height:13px;padding:0;',
+      'border:1px solid var(--dsw-alias-border-l2,#0000001f);border-radius:999px;background:var(--dsw-alias-bg-layer-1,#fff);',
+      'color:var(--dsw-alias-label-secondary);cursor:pointer;opacity:0;transform:scale(.85);',
+      'transition:opacity 120ms ease,transform 120ms ease,background 120ms ease;pointer-events:none}',
+      '.dsod_stack:hover .dsod_badge,.dsod_stack:focus-within .dsod_badge,.dsod_root[data-open="1"] .dsod_badge',
+      '{opacity:1;transform:scale(1);pointer-events:auto}',
+      '.dsod_badge:hover{background:var(--dsw-alias-interactive-bg-hover-solid,var(--dsw-alias-bg-layer-3));',
+      'color:var(--dsw-alias-label-primary)}',
+      '.dsod_badge:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f8cff);outline-offset:1px}',
+      '.dsod_badgeGlyph{display:block}',
       '.dsod_menu{position:fixed;z-index:2147483000;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;',
       'min-width:212px;max-width:300px;max-height:min(62vh,420px);overflow:auto;padding:6px;',
       'border:0.5px solid var(--dsw-alias-border-l2,#0000001f);border-radius:12px;',
@@ -145,6 +162,8 @@ window.__ModuleLoader__.load({
       '.dsod_item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:8px;',
       'background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer}',
       '.dsod_item:hover:not(:disabled),.dsod_item:focus-visible{outline:none;background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2))}',
+      /* 当前生效的那一行：图标列打勾位留白由文字色体现，避免多一列挤压名称。 */
+      '.dsod_item.is-on{color:var(--dsw-alias-state-business-primary,#4f8cff)}',
       '.dsod_item:disabled{opacity:.45;cursor:default}',
       '.dsod_itemIcon{flex:none;width:16px;height:16px;display:grid;place-items:center;border-radius:3px;overflow:hidden}',
       '.dsod_itemIcon img{width:16px;height:16px;object-fit:contain;display:block}',
@@ -152,6 +171,7 @@ window.__ModuleLoader__.load({
       '.dsod_tag{flex:none;font-size:11px;padding:1px 6px;border-radius:999px;',
       'border:0.5px solid var(--dsw-alias-border-l2,#0000001f);color:var(--dsw-alias-label-secondary)}',
       '.dsod_note{padding:6px 8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.dsod_noteHint{padding:2px 8px 6px;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}',
       '.dsod_noteError{color:var(--dsw-alias-state-error-primary,#e5484d)}',
       '.dsod_retry{margin:2px 6px 4px;padding:6px 10px;font:inherit;font-size:12px;border-radius:8px;',
       'border:0.5px solid var(--dsw-alias-border-l2,#0000001f);background:var(--dsw-alias-bg-layer-2,transparent);',
@@ -414,22 +434,12 @@ window.__ModuleLoader__.load({
 
       const list = apps === null ? [] : apps;
       const preferred = list.indexOf(last) >= 0 ? last : list[0];
-      const otherAnchor = anchor === 'header' ? 'composer' : 'header';
+      const hasTarget = preferred !== undefined && preferred !== '' && !loadError;
+      const currentName = preferred !== undefined && preferred !== '' ? appName(preferred, lang) : '';
 
-      const toggle = () => {
-        if (busyRef.current) return;
-        if (open) {
-          setOpen(false);
-          return;
-        }
-        if (buttonRef.current) setRect(placeMenu(buttonRef.current.getBoundingClientRect()));
-        setError(false);
-        setOpen(true);
-        if (loadError) refresh();
-      };
-
-      const choose = (appId) => {
-        if (busyRef.current) return;
+      /** 真正发起一次启动；单击与菜单共用，保证同一时刻只有一个在飞。 */
+      const start = (appId) => {
+        if (busyRef.current || typeof cwd !== 'string') return;
         busyRef.current = true;
         setBusy(true);
         setOpen(false);
@@ -446,33 +456,94 @@ window.__ModuleLoader__.load({
         });
       };
 
-      const label = translate('button.label');
-      const tooltip = preferred !== undefined && preferred !== ''
-        ? translate('button.tooltip', { app: appName(preferred, lang) })
+      /** 打开「更换」菜单；只想换应用，不立刻打开。 */
+      const showMenu = () => {
+        if (busyRef.current) return;
+        if (open) {
+          setOpen(false);
+          return;
+        }
+        if (buttonRef.current) setRect(placeMenu(buttonRef.current.getBoundingClientRect()));
+        setError(false);
+        setOpen(true);
+        if (loadError) refresh();
+      };
+
+      /**
+       * 单击：直接用记住的应用打开。
+       * 没有可用目标（读取失败 / 一个应用都没有）时没有「记住的应用」可言，
+       * 这时单击改为展开菜单，让用户看到原因与重试入口。
+       */
+      const onPrimary = () => {
+        if (busyRef.current) return;
+        if (!hasTarget) {
+          showMenu();
+          return;
+        }
+        start(preferred);
+      };
+
+      /** 菜单里选一个：只改「下次单击用哪个」，不启动。 */
+      const remember = (appId) => {
+        setLast(appId);
+        writeLast(appId);
+        setOpen(false);
+        setError(false);
+      };
+
+      /** 右键：换应用，同时压掉系统菜单。 */
+      const onContextMenu = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showMenu();
+      };
+
+      const tooltip = currentName !== ''
+        ? translate('button.changeHint', { app: currentName })
         : translate('button.tooltipGeneric');
 
       const button = h('button', {
         ref: buttonRef,
         type: 'button',
         className: 'dsod_btn',
-        'aria-label': label,
-        'aria-haspopup': 'menu',
-        'aria-expanded': open ? 'true' : 'false',
+        'aria-label': currentName !== '' ? translate('button.tooltip', { app: currentName }) : translate('button.label'),
         title: tooltip,
         'data-busy': busy ? '1' : undefined,
         'data-error': error ? '1' : undefined,
-        disabled: list.length === 0 && !loadError,
-        onClick: toggle,
+        disabled: busy,
+        onClick: onPrimary,
+        onContextMenu: onContextMenu,
         onMouseDown: (event) => { event.preventDefault(); },
       },
       preferred !== undefined && preferred !== '' ? h(AppIcon, { id: preferred }) : h(OpenGlyph, { size: 16 }));
+
+      // 角标：平时淡出，鼠标悬浮到按钮上或聚焦时浮现；点它只换应用。
+      const badge = h('button', {
+        type: 'button',
+        className: 'dsod_badge',
+        'aria-label': translate('button.change'),
+        'aria-haspopup': 'menu',
+        'aria-expanded': open ? 'true' : 'false',
+        title: translate('button.change'),
+        tabIndex: -1,
+        disabled: busy,
+        onClick: (event) => { event.stopPropagation(); showMenu(); },
+        onMouseDown: (event) => { event.preventDefault(); },
+        onContextMenu: onContextMenu,
+      }, h('svg', {
+        className: 'dsod_badgeGlyph', width: 8, height: 8, viewBox: '0 0 8 8',
+        'aria-hidden': 'true', focusable: 'false',
+      }, h('path', {
+        d: 'M1 3.2 4 6.6 7 3.2', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round',
+      })));
 
       const menu = open && rect !== null ? createPortal(
         h('div', {
           ref: menuRef,
           className: 'dsod_menu',
           role: 'menu',
-          'aria-label': label,
+          'aria-label': translate('menu.pickTitle'),
           'data-mode': rect.mode,
           style: {
             left: String(Math.round(rect.left)) + 'px',
@@ -483,42 +554,35 @@ window.__ModuleLoader__.load({
           },
         },
         h('div', { className: 'dsod_head' },
-          h('span', { className: 'dsod_headTitle' }, translate('menu.title')),
+          h('span', { className: 'dsod_headTitle' }, translate('menu.pickTitle')),
           h('span', { className: 'dsod_headPath', title: cwd }, translate('menu.target', { path: cwd }))),
+        h('div', { className: 'dsod_note dsod_noteHint' }, translate('menu.pickTarget')),
         h('div', { className: 'dsod_sep' }),
         list.length === 0
           ? h('div', { className: 'dsod_note' }, translate(loadError ? 'menu.loadError' : 'menu.empty'))
           : list.map((appId) => h('button', {
             key: appId,
             type: 'button',
-            role: 'menuitem',
-            className: 'dsod_item',
+            role: 'menuitemradio',
+            'aria-checked': appId === preferred ? 'true' : 'false',
+            className: 'dsod_item' + (appId === preferred ? ' is-on' : ''),
             disabled: busy,
-            onClick: () => { choose(appId); },
+            onClick: () => { remember(appId); },
           },
           h('span', { className: 'dsod_itemIcon' }, h(AppIcon, { id: appId })),
           h('span', { className: 'dsod_itemName' }, appName(appId, lang)),
-          appId === last ? h('span', { className: 'dsod_tag' }, translate('menu.lastUsed')) : null)),
+          appId === preferred ? h('span', { className: 'dsod_tag' }, translate('menu.lastUsed')) : null)),
         loadError
           ? h(React.Fragment, null,
             h('div', { className: 'dsod_sep' }),
             h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.loadError')),
             h('button', { type: 'button', className: 'dsod_retry', onClick: refresh }, translate('menu.retry')))
           : null,
-        error ? h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.error')) : null,
-        // 快捷换位：菜单里直接挪，不必进设置。
-        h('div', { className: 'dsod_sep' }),
-        h('button', {
-          type: 'button',
-          className: 'dsod_item',
-          onClick: () => { setOpen(false); setPosition(otherAnchor); },
-        },
-        h('span', { className: 'dsod_itemIcon' }, h(OpenGlyph, { size: 16 })),
-        h('span', { className: 'dsod_itemName' },
-          translate(otherAnchor === 'header' ? 'menu.moveToHeader' : 'menu.moveToComposer')))),
+        error ? h('div', { className: 'dsod_note dsod_noteError' }, translate('menu.error')) : null),
         document.body) : null;
 
-      return h('div', { className: 'dsod_root', 'data-anchor': anchor }, button, menu);
+      return h('div', { className: 'dsod_root', 'data-anchor': anchor, 'data-open': open ? '1' : '0' },
+        h('div', { className: 'dsod_stack' }, button, badge), menu);
     }
 
     /** 右上角座位（会话标题栏，⋯ 左侧）。 */

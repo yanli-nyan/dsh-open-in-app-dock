@@ -135,6 +135,41 @@ for (const name of ['conversation.session.header.utilities', 'conversation.input
 }
 assert(slots.get('conversation.session.header.utilities').options.order < 0, '右上角按钮应在 ⋯ 菜单（order 0）左侧')
 
+
+/** 在元素树里按 aria-label 找按钮（会展开函数组件）。 */
+function findButton(node, label, depth = 0) {
+  if (depth > 12 || node === null || node === undefined || node === false) return undefined
+  if (typeof node === 'function') return findButton(node({}), label, depth + 1)
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findButton(child, label, depth + 1)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (typeof node !== 'object') return undefined
+  if (typeof node.type === 'function') return findButton(node.type(node.props), label, depth + 1)
+  if (node.props['aria-label'] === label) return node
+  return findButton(node.children, label, depth + 1)
+}
+
+/** 在元素树里按 className 找元素（会展开函数组件）。 */
+function findByClass(node, className, depth = 0) {
+  if (depth > 12 || node === null || node === undefined || node === false) return undefined
+  if (typeof node === 'function') return findByClass(node({}), className, depth + 1)
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findByClass(child, className, depth + 1)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (typeof node !== 'object') return undefined
+  if (typeof node.type === 'function') return findByClass(node.type(node.props), className, depth + 1)
+  if (String(node.props.className || '').split(' ').includes(className)) return node
+  return findByClass(node.children, className, depth + 1)
+}
+
 const t = ctx.locale.bind()
 const header = slots.get('conversation.session.header.utilities').component
 const composer = slots.get('conversation.input.left').component
@@ -181,6 +216,22 @@ assert(rowText !== '', '设置行必须渲染')
 for (const label of ['右上角', '底栏左侧', '隐藏']) {
   assert(rowText.includes(label), '设置行缺少选项 ' + label + '：' + rowText)
 }
+// 位置切换只留在设置里：按钮自身不再出现换位入口。
+assert(!rowText.includes('移到'), '设置行不应出现换位菜单项')
+const headerText = rendered(header, withCwd)
+assert(!headerText.includes('移到右上角') && !headerText.includes('移到底栏左侧'),
+  '按钮不应再提供换位入口（换位只在设置里）：' + headerText)
+
+// 交互模型：单击 = 直接打开；角标/右键 = 更换。
+// 在桩件里取出真实创建的元素树，检查绑定的事件。
+const tree = header(withCwd)
+for (const found of [findButton(tree, '在应用中打开')]) {
+  assert(found !== undefined, '找不到主按钮')
+  assert(typeof found.props.onClick === 'function', '主按钮必须有 onClick')
+  assert(typeof found.props.onContextMenu === 'function', '主按钮必须支持右键更换')
+}
+assert(findByClass(tree, 'dsod_badge') !== undefined, '缺少更换角标')
+assert(findByClass(tree, 'dsod_badge').props['aria-label'] === '更换', '角标无障碍名应为「更换」')
 
 // 非法偏好回落到默认。
 api.setPosition('nonsense')
